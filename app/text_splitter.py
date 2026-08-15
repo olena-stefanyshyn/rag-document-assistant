@@ -32,7 +32,7 @@ if __name__ == "__main__":
     text = load_pdf(path)
     chunks = split_text(text)
 
-print(f"Document lenght: {len(text)}")
-print(f"Number of chunks: {len(chunks)}")
-print(f"First chunk length: {len(chunks[0])}")
-print(f"Last chunk length: {len(chunks[-1])}")
+    print(f"Document lenght: {len(text)}")
+    print(f"Number of chunks: {len(chunks)}")
+    print(f"First chunk length: {len(chunks[0])}")
+    print(f"Last chunk length: {len(chunks[-1])}")
