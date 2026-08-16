@@ -13,7 +13,18 @@ def load_pdf(file_path: Path) -> str:
         if text:
             pages.append(text)
 
-    return "\n".join(pages)
+    full_text = "\n".join(pages)
+    full_text = remove_references(full_text)
+
+    return full_text
+
+def remove_references(text: str) -> str:
+    marker = "\nReferences"
+
+    if marker in text:
+        return text.split(marker, 1)[0]
+
+    return text
 
 
 def load_documents(directory: Path) -> dict[str, str]:
@@ -25,6 +36,8 @@ def load_documents(directory: Path) -> dict[str, str]:
     return documents
 
 
+
+
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent.parent
     data_dir = project_root / "data" / "raw"
@@ -34,4 +47,3 @@ if __name__ == "__main__":
     for name, text in documents.items():
         print(f"{name}: {len(text)} characters")
 
-    print(text[:2000])
