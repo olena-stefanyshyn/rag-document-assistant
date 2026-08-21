@@ -1,57 +1,77 @@
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_NAME = "google/flan-t5-base"
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    dtype=torch.float16,
+    low_cpu_mem_usage=True
+)
+
+model.eval()
+
 
 def generate_answer(query: str, context_chunks: list[str]) -> str:
-    context = "\n\n".join(context_chunks)
+    context = "\n\n---\n\n".join(context_chunks)
 
-    prompt = f"""
-    Answer the question using only the context below.
-    Give a concise answer in one or two complete sentences.
-    If the answer cannot be found in the context, say "I don't know."
-
-    Question:
-    {query}
-
-    Context:
-    {context}
-
-    Answer:
-    """
-
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=1024,
-    )
-
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=100,
-    )
-
-    answer = tokenizer.decode(
-        outputs[0],
-        skip_special_tokens=True,
-    )
-
-    return answer
-
-if __name__ == "__main__":
-    query = "What is retrieval augmented generation?"
-
-    context_chunks = [
-        "Retrieval-augmented generation combines a pretrained parametric "
-        "language model with non-parametric external memory.",
-
-        "The retriever finds relevant documents and the generator uses "
-        "those documents as additional context."
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a document question-answering assistant. "
+                "Answer strictly using the provided context. "
+                "Read all relevant passages before answering. "
+                "Give a complete explanation of the mechanism asked about, not just one extracted sentence. "
+                "Preserve technical terms and mathematical notation accurately. "
+                "Do not invent or alter formulas. "
+                "Ignore unrelated experimental results. "
+                "Use 2-4 concise sentences. "
+                "If the answer is not present in the context, say "
+                "'I don't have enough information in the provided context.'"
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Context:\n{context}\n\n"
+                f"Question: {query}\n\n"
+                "Explain the answer directly and completely."
+            )
+        }
     ]
 
-    answer = generate_answer(query, context_chunks)
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
 
-    print(answer)
+    inputs = tokenizer(
+        [text],
+        return_tensors="pt"
+    )
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=120,
+            do_sample=False,
+            repetition_penalty=1.05,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    generated_ids = [
+        output_ids[len(input_ids):]
+        for input_ids, output_ids in zip(inputs.input_ids, outputs)
+    ]
+
+    answer = tokenizer.batch_decode(
+        generated_ids,
+        skip_special_tokens=True
+    )[0]
+
+    return answer.strip()
