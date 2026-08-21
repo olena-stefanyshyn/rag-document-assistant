@@ -22,15 +22,15 @@ def generate_answer(query: str, context_chunks: list[str]) -> str:
             "role": "system",
             "content": (
                 "You are a document question-answering assistant. "
-                "Answer strictly using the provided context. "
+                "Answer the question using only the provided context. "
                 "Read all relevant passages before answering. "
-                "Give a complete explanation of the mechanism asked about, not just one extracted sentence. "
-                "Preserve technical terms and mathematical notation accurately. "
-                "Do not invent or alter formulas. "
-                "Ignore unrelated experimental results. "
-                "Use 2-4 concise sentences. "
-                "If the answer is not present in the context, say "
-                "'I don't have enough information in the provided context.'"
+                "Give a direct and complete answer in 2-4 concise sentences. "
+                "Preserve technical terminology, formulas, and mathematical notation exactly. "
+                "Do not change the meaning of mathematical symbols or quantities. "
+                "Distinguish vector representations from scores, probabilities, and model outputs. "
+                "Ignore context that is unrelated to the question. "
+                "If the context does not contain enough information to answer, say: "
+                "\"I don't have enough information in the provided context.\""
             )
         },
         {
