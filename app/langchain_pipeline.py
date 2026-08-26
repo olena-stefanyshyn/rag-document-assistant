@@ -2,9 +2,8 @@ from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from sentence_transformers import CrossEncoder
+from retriever import create_reranker, retrieve_and_rerank
+from embeddings import create_vector_store
 
 from generator import generate_answer
 
@@ -29,14 +28,7 @@ def build_vector_store(pdf_path: Path):
 
     print(f"Chunks: {len(chunks)}")
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
-
-    vector_store = FAISS.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-    )
+    vector_store = create_vector_store(chunks)
 
     print(f"Vectors stored: {vector_store.index.ntotal}")
 
@@ -53,26 +45,12 @@ def ask_question(
     and generate an answer from the best context.
     """
 
-    retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={
-            "k": 12,
-        },
-    )
-
-    results = retriever.invoke(query)
-
-    pairs = [
-        (query, doc.page_content)
-        for doc in results
-    ]
-
-    scores = reranker.predict(pairs)
-
-    reranked_results = sorted(
-        zip(results, scores),
-        key=lambda item: item[1],
-        reverse=True,
+    reranked_results = retrieve_and_rerank(
+        query=query,
+        vector_store=vector_store,
+        reranker=reranker,
+        retrieval_k=12,
+        final_k=5,
     )
 
     print("\nTOP RETRIEVED RESULTS:")
@@ -111,11 +89,11 @@ def print_sources(sources):
     print("\nSOURCES:")
 
     for doc, score in sources:
+
         page = doc.metadata.get("page")
 
-        if page is not None and page not in seen_pages:
-            # LangChain page numbering starts from 0
-            print(f"- Page {page + 1}")
+        if page is not None:
+            print(f"Page: {page + 1}")
             seen_pages.add(page)
 
 
@@ -137,9 +115,7 @@ if __name__ == "__main__":
 
     print("\nLoading reranker...")
 
-    reranker = CrossEncoder(
-        "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
+    reranker = create_reranker()
 
     print("\nRAG assistant is ready.")
 

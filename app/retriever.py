@@ -1,64 +1,48 @@
-import numpy as np
+from sentence_transformers import CrossEncoder
 
-from pathlib import Path
 
-from document_loader import load_pdf
-from text_splitter import split_text
-from embeddings import create_embeddings
+RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-def cosine_similarity(query_vector, document_vectors):
-    query_norm = np.linalg.norm(query_vector)
-    document_norms = np.linalg.norm(document_vectors, axis=1)
 
-    similarities = document_vectors @ query_vector
-    similarities = similarities / (document_norms * query_norm + 1e-10)
+def create_reranker():
+    """
+    Create and return the cross-encoder reranker.
+    """
+    return CrossEncoder(RERANKER_MODEL_NAME)
 
-    return similarities
 
-def retrieve_top_k(
-        query_embedding,
-        chunk_embeddings,
-        chunks,
-        k: int = 3,
+def retrieve_and_rerank(
+    query: str,
+    vector_store,
+    reranker,
+    retrieval_k: int = 12,
+    final_k: int = 5,
 ):
-    similarities = cosine_similarity(
-        query_embedding,
-        chunk_embeddings,
+    """
+    Retrieve candidate chunks from the vector store
+    and rerank them using a cross-encoder.
+    """
+
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": retrieval_k,
+        },
     )
 
-    top_indices = np.argsort(similarities)[-k:][::-1]
+    results = retriever.invoke(query)
 
-    results = []
+    pairs = [
+        (query, doc.page_content)
+        for doc in results
+    ]
 
-    for index in top_indices:
-        results.append(
-            {
-                "chunk": chunks[index],
-                "score": float(similarities[index]),
-            }
-        )
+    scores = reranker.predict(pairs)
 
-    return results
-
-if __name__ == "__main__":
-    project_root = Path(__file__).resolve().parent.parent
-    path = project_root / "data" / "raw" / "rag.pdf"
-
-    text = load_pdf(path)
-    chunks = split_text(text)
-    chunk_embeddings = create_embeddings(chunks)
-
-    query = "What is retrieval augmented generation?"
-    query_embedding = create_embeddings([query])[0]
-
-    results = retrieve_top_k(
-        query_embedding,
-        chunk_embeddings,
-        chunks,
-        k=5,
+    reranked_results = sorted(
+        zip(results, scores),
+        key=lambda item: item[1],
+        reverse=True,
     )
 
-    for result in results:
-        print(f"Score: {result["score"]:.3f}")
-        print(result["chunk"])
-        print("-" * 80)
+    return reranked_results[:final_k]

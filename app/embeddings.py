@@ -1,24 +1,32 @@
-from pathlib import Path
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 
-from sentence_transformers import SentenceTransformer
 
-from document_loader import load_pdf
-from text_splitter import split_text
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def create_embeddings(chunks: list[str]):
-    embeddings = model.encode(chunks)
+def create_embedding_model():
+    """
+    Create and return the embedding model.
+    """
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL_NAME
+    )
 
     return embeddings
 
-if __name__ == "__main__":
-    project_root = Path(__file__).resolve().parent.parent
-    path = project_root / "data" / "raw" / "rag.pdf"
 
-    text = load_pdf(path)
-    chunks = split_text(text)
-    embeddings = create_embeddings(chunks)
+def create_vector_store(chunks):
+    """
+    Create a FAISS vector store from LangChain Document chunks.
+    """
 
-    print(f"Number of chunks: {len(chunks)}")
-    print(f"Embeddings shape: {embeddings.shape}")
+    embeddings = create_embedding_model()
+
+    vector_store = FAISS.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+    )
+
+    return vector_store

@@ -258,7 +258,7 @@ def evaluate():
         question = test["question"]
         relevant_pages = test["relevant_pages"]
 
-        print("\n" + "=" * 70)
+
         print(f"TEST {i}")
         print(f"Question: {question}")
 
@@ -363,7 +363,7 @@ def evaluate():
         answer_correct / total
     )
 
-    print("\n" + "=" * 70)
+
     print("FINAL RESULTS")
 
     print(
