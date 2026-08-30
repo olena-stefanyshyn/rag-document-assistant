@@ -4,9 +4,15 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from embeddings import create_vector_store
-from retriever import create_reranker, retrieve_and_rerank
+from retriever import (
+    create_reranker,
+    retrieve_and_rerank,
+    select_diverse_results,
+)
 from generator import generate_answer
 
+
+# single-document tests
 
 TEST_CASES = [
     {
@@ -22,7 +28,10 @@ TEST_CASES = [
         "relevant_pages": [2],
     },
     {
-        "question": "What is the difference between RAG-Token and RAG-Sequence?",
+        "question": (
+            "What is the difference between "
+            "RAG-Token and RAG-Sequence?"
+        ),
         "reference_answer": (
             "RAG-Sequence uses the same retrieved document to predict "
             "each target token, while RAG-Token can use a different "
@@ -51,11 +60,15 @@ TEST_CASES = [
         "relevant_pages": [3],
     },
     {
-        "question": "Does retrieving more documents always improve performance?",
+        "question": (
+            "Does retrieving more documents "
+            "always improve performance?"
+        ),
         "reference_answer": (
-            "No. Retrieving more documents improves RAG-Sequence performance "
-            "in the reported open-domain QA experiment, but RAG-Token performance "
-            "peaks at around 10 retrieved documents."
+            "No. Retrieving more documents improves RAG-Sequence "
+            "performance in the reported open-domain QA experiment, "
+            "but RAG-Token performance peaks at around 10 retrieved "
+            "documents."
         ),
         "expected_keyword_groups": [
             [
@@ -67,10 +80,14 @@ TEST_CASES = [
         "relevant_pages": [8],
     },
     {
-        "question": "How can RAG's knowledge be updated at test time?",
+        "question": (
+            "How can RAG's knowledge be "
+            "updated at test time?"
+        ),
         "reference_answer": (
             "RAG's knowledge can be updated at test time by replacing "
-            "or hot-swapping its non-parametric memory or retrieval index."
+            "or hot-swapping its non-parametric memory or retrieval "
+            "index."
         ),
         "expected_keyword_groups": [
             [
@@ -91,23 +108,80 @@ TEST_CASES = [
 ]
 
 
+# multi-document tests
+
+MULTI_DOCUMENT_TESTS = [
+    {
+        "question": (
+            "How do Dense Passage Retrieval and the Transformer "
+            "architecture use learned representations?"
+        ),
+        "expected_documents": [
+            "dpr.pdf",
+            "transformer.pdf",
+        ],
+    },
+]
+
+
 def build_vector_store(pdf_path: Path):
     """
-    Load the PDF, split it into chunks,
-    and build the FAISS vector store.
+    Load one PDF, split it into chunks,
+    and build a FAISS vector store.
     """
 
     loader = PyPDFLoader(str(pdf_path))
     documents = loader.load()
+
+    # add the document name to metadata
+    for doc in documents:
+        doc.metadata["document"] = pdf_path.name
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=700,
         chunk_overlap=100,
     )
 
-    chunks = text_splitter.split_documents(documents)
+    chunks = text_splitter.split_documents(
+        documents
+    )
 
     return create_vector_store(chunks)
+
+
+def build_multi_document_vector_store(pdf_paths):
+    """
+    Load multiple PDFs and build one shared
+    FAISS vector store.
+    """
+
+    all_chunks = []
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=700,
+        chunk_overlap=100,
+    )
+
+    for pdf_path in pdf_paths:
+        loader = PyPDFLoader(
+            str(pdf_path)
+        )
+
+        documents = loader.load()
+
+        # add the source document name to metadata
+        for doc in documents:
+            doc.metadata["document"] = pdf_path.name
+
+        chunks = text_splitter.split_documents(
+            documents
+        )
+
+        all_chunks.extend(chunks)
+
+    return create_vector_store(
+        all_chunks
+    )
 
 
 def get_page(doc):
@@ -135,7 +209,10 @@ def get_retrieved_pages(reranked_results):
     for doc, score in reranked_results:
         page = get_page(doc)
 
-        if page is not None and page not in pages:
+        if (
+            page is not None
+            and page not in pages
+        ):
             pages.append(page)
 
     return pages
@@ -143,7 +220,7 @@ def get_retrieved_pages(reranked_results):
 
 def is_relevant(doc, relevant_pages):
     """
-    Check whether a retrieved document belongs
+    Check whether a retrieved chunk belongs
     to one of the manually labelled relevant pages.
     """
 
@@ -168,7 +245,10 @@ def hit_at_k(
     top_k_results = reranked_results[:k]
 
     for doc, score in top_k_results:
-        if is_relevant(doc, relevant_pages):
+        if is_relevant(
+            doc,
+            relevant_pages,
+        ):
             return 1
 
     return 0
@@ -179,7 +259,8 @@ def reciprocal_rank(
     relevant_pages,
 ):
     """
-    Return reciprocal rank of the first relevant result.
+    Return reciprocal rank of the first
+    relevant result.
 
     rank 1 -> 1.0
     rank 2 -> 0.5
@@ -190,7 +271,10 @@ def reciprocal_rank(
         reranked_results,
         start=1,
     ):
-        if is_relevant(doc, relevant_pages):
+        if is_relevant(
+            doc,
+            relevant_pages,
+        ):
             return 1.0 / rank
 
     return 0.0
@@ -210,7 +294,6 @@ def check_answer(
     answer_lower = answer.lower()
 
     for group in expected_keyword_groups:
-
         group_match = any(
             keyword.lower() in answer_lower
             for keyword in group
@@ -222,8 +305,67 @@ def check_answer(
     return True
 
 
-def evaluate():
-    project_root = Path(__file__).resolve().parent.parent
+def get_retrieved_documents(results):
+    """
+    Return unique document names
+    from selected retrieval results.
+    """
+
+    documents = []
+
+    for doc, score in results:
+        document = doc.metadata.get(
+            "document"
+        )
+
+        if (
+            document is not None
+            and document not in documents
+        ):
+            documents.append(document)
+
+    return documents
+
+
+def document_coverage(
+    results,
+    expected_documents,
+):
+    """
+    Measure what fraction of expected documents
+    are represented in the selected context.
+    """
+
+    retrieved_documents = set(
+        get_retrieved_documents(results)
+    )
+
+    expected_documents = set(
+        expected_documents
+    )
+
+    if not expected_documents:
+        return 1.0
+
+    matched_documents = (
+        retrieved_documents
+        & expected_documents
+    )
+
+    return (
+        len(matched_documents)
+        / len(expected_documents)
+    )
+
+
+def evaluate_single_document(
+    project_root,
+    reranker,
+):
+    """
+    Evaluate retrieval and answer generation
+    on rag.pdf.
+    """
 
     pdf_path = (
         project_root
@@ -232,15 +374,12 @@ def evaluate():
         / "rag.pdf"
     )
 
-    print("Building vector store...")
+    print("\nSingle-document evaluation")
+    print("\nBuilding vector store...")
 
     vector_store = build_vector_store(
         pdf_path
     )
-
-    print("Loading reranker...")
-
-    reranker = create_reranker()
 
     total = len(TEST_CASES)
 
@@ -258,8 +397,7 @@ def evaluate():
         question = test["question"]
         relevant_pages = test["relevant_pages"]
 
-
-        print(f"TEST {i}")
+        print(f"\nTest {i}")
         print(f"Question: {question}")
 
         reranked_results = retrieve_and_rerank(
@@ -351,9 +489,17 @@ def evaluate():
             f"{'PASS' if answer_success else 'FAIL'}"
         )
 
-    hit_at_1_score = hit_1_total / total
-    hit_at_3_score = hit_3_total / total
-    mrr = reciprocal_rank_total / total
+    hit_at_1_score = (
+        hit_1_total / total
+    )
+
+    hit_at_3_score = (
+        hit_3_total / total
+    )
+
+    mrr = (
+        reciprocal_rank_total / total
+    )
 
     retrieval_accuracy = (
         retrieval_correct / total
@@ -363,8 +509,7 @@ def evaluate():
         answer_correct / total
     )
 
-
-    print("FINAL RESULTS")
+    print("\nSingle-document final results")
 
     print(
         f"Hit@1: "
@@ -392,6 +537,155 @@ def evaluate():
         f"Answer accuracy: "
         f"{answer_correct}/{total} "
         f"({answer_accuracy:.2%})"
+    )
+
+
+def evaluate_multi_document(
+    project_root,
+    reranker,
+):
+    """
+    Evaluate whether diversified selection
+    preserves context from multiple documents.
+    """
+
+    pdf_paths = [
+        (
+            project_root
+            / "data"
+            / "raw"
+            / "dpr.pdf"
+        ),
+        (
+            project_root
+            / "data"
+            / "raw"
+            / "transformer.pdf"
+        ),
+    ]
+
+    print("\nMulti-document evaluation")
+    print(
+        "\nBuilding multi-document "
+        "vector store..."
+    )
+
+    vector_store = (
+        build_multi_document_vector_store(
+            pdf_paths
+        )
+    )
+
+    total_coverage = 0.0
+
+    for i, test in enumerate(
+        MULTI_DOCUMENT_TESTS,
+        start=1,
+    ):
+        question = test["question"]
+
+        expected_documents = test[
+            "expected_documents"
+        ]
+
+        print(
+            f"\nMulti-document test {i}"
+        )
+
+        print(
+            f"Question: {question}"
+        )
+
+        # keep more candidates so diversity selection
+        # can choose chunks from different documents
+        reranked_results = retrieve_and_rerank(
+            query=question,
+            vector_store=vector_store,
+            reranker=reranker,
+            retrieval_k=12,
+            final_k=12,
+        )
+
+        selected_results = select_diverse_results(
+            reranked_results=reranked_results,
+            final_k=3,
+        )
+
+        coverage = document_coverage(
+            results=selected_results,
+            expected_documents=expected_documents,
+        )
+
+        total_coverage += coverage
+
+        retrieved_documents = (
+            get_retrieved_documents(
+                selected_results
+            )
+        )
+
+        context_chunks = [
+            doc.page_content
+            for doc, score in selected_results
+        ]
+
+        answer = generate_answer(
+            query=question,
+            context_chunks=context_chunks,
+        )
+
+        print("\nExpected documents:")
+        print(expected_documents)
+
+        print("\nSelected documents:")
+        print(retrieved_documents)
+
+        print("\nGenerated answer:")
+        print(answer)
+
+        print(
+            "\nDocument Coverage: "
+            f"{coverage:.2%}"
+        )
+
+        print(
+            "Coverage status: "
+            f"{'PASS' if coverage == 1.0 else 'FAIL'}"
+        )
+
+    average_coverage = (
+        total_coverage
+        / len(MULTI_DOCUMENT_TESTS)
+    )
+
+    print("\nMulti-document final results")
+
+    print(
+        "Average Document Coverage: "
+        f"{average_coverage:.2%}"
+    )
+
+
+def evaluate():
+    project_root = (
+        Path(__file__)
+        .resolve()
+        .parent
+        .parent
+    )
+
+    print("Loading reranker...")
+
+    reranker = create_reranker()
+
+    evaluate_single_document(
+        project_root=project_root,
+        reranker=reranker,
+    )
+
+    evaluate_multi_document(
+        project_root=project_root,
+        reranker=reranker,
     )
 
 
