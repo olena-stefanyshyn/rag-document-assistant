@@ -5,3 +5,5 @@ __pycache__/
 .idea/
 data/raw/*.pdf
 data/uploads/
+data/faiss_index/
+data/uploads/
