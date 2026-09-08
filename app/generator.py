@@ -8,7 +8,7 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
-    dtype=torch.float16,
+    dtype=torch.float32,
     low_cpu_mem_usage=True,
 )
 
@@ -77,10 +77,10 @@ def generate_answer(query: str, context_chunks: list[str]) -> str:
         return_tensors="pt",
     )
 
-    with torch.no_grad():
+    with torch.inference_mode():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=100,
+            max_new_tokens=30,
             do_sample=False,
             repetition_penalty=1.05,
             eos_token_id=tokenizer.eos_token_id,
