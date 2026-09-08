@@ -91,28 +91,20 @@ Swagger UI:
 http://localhost:8000/docs
 ```
 
-## CI & Deployment
-
-GitHub Actions automatically verifies the project on pushes and pull requests by installing dependencies and building the Docker image.
-
-The application is deployed on an Oracle Cloud Ubuntu ARM64 VM using Docker Compose.
+## CI/CD & Deployment
 
 ```text
-GitHub
+Git Push
+   ↓
+GitHub Actions CI
+   ↓
+Build
+   ↓
+Automatic Deployment
    ↓
 Oracle Cloud VM
    ↓
 Docker Compose
    ↓
-FastAPI
-   ↓
-RAG Pipeline
+FastAPI + RAG Pipeline
 ```
-
-## Future Improvements
-
-- Stronger generation model
-- Semantic answer evaluation
-- Structured logging and monitoring
-- HTTPS / reverse proxy
-- Automated deployment (CD)
