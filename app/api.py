@@ -1,5 +1,7 @@
 from pathlib import Path
 import shutil
+import logging
+import time
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -12,13 +14,32 @@ from app.embeddings import (
     create_embedding_model,
     create_vector_store,
 )
+
 from app.retriever import (
     create_reranker,
     retrieve_and_rerank,
     select_diverse_results,
 )
+
 from app.generator import generate_answer
 
+
+# Logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format=(
+        "%(asctime)s | "
+        "%(levelname)s | "
+        "%(name)s | "
+        "%(message)s"
+    ),
+)
+
+logger = logging.getLogger(__name__)
+
+
+# FastAPI app
 
 app = FastAPI(
     title="RAG Document Assistant",
@@ -218,11 +239,11 @@ def startup_event():
     global reranker
     global indexed_documents
 
-    print("Loading reranker...")
+    logger.info("Loading reranker...")
 
     reranker = create_reranker()
 
-    print(
+    logger.info(
         "Checking for saved FAISS index..."
     )
 
@@ -236,27 +257,26 @@ def startup_event():
                 load_indexed_documents()
             )
 
-            print(
+            logger.info(
                 "Saved FAISS index loaded."
             )
 
-            print(
-                "Indexed documents: "
-                f"{indexed_documents}"
+            logger.info(
+                "Indexed documents: %s",
+                indexed_documents,
             )
 
         else:
-            print(
+            logger.info(
                 "No saved FAISS index found."
             )
 
-    except Exception as exc:
-        print(
-            "Could not load saved "
-            f"FAISS index: {exc}"
+    except Exception:
+        logger.exception(
+            "Could not load saved FAISS index."
         )
 
-    print("RAG API is ready.")
+    logger.info("RAG API is ready.")
 
 
 # Root
@@ -287,7 +307,18 @@ async def upload_document(
     global vector_store
     global indexed_documents
 
+    start_time = time.perf_counter()
+
+    logger.info(
+        "Document upload started | filename=%s",
+        file.filename,
+    )
+
     if not file.filename:
+        logger.warning(
+            "Upload rejected | missing filename"
+        )
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -298,6 +329,11 @@ async def upload_document(
     if not file.filename.lower().endswith(
         ".pdf"
     ):
+        logger.warning(
+            "Upload rejected | unsupported file | filename=%s",
+            file.filename,
+        )
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -306,6 +342,11 @@ async def upload_document(
         )
 
     if file.filename in indexed_documents:
+        logger.warning(
+            "Upload rejected | already indexed | filename=%s",
+            file.filename,
+        )
+
         raise HTTPException(
             status_code=409,
             detail=(
@@ -332,6 +373,11 @@ async def upload_document(
             )
 
     except Exception as exc:
+        logger.exception(
+            "Could not save uploaded file | filename=%s",
+            file.filename,
+        )
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -339,6 +385,11 @@ async def upload_document(
                 f"{exc}"
             ),
         )
+
+    logger.info(
+        "Uploaded file saved | filename=%s",
+        file.filename,
+    )
 
     # Build temporary vector store
     try:
@@ -351,6 +402,11 @@ async def upload_document(
         )
 
     except Exception as exc:
+        logger.exception(
+            "Could not process PDF | filename=%s",
+            file.filename,
+        )
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -358,6 +414,13 @@ async def upload_document(
                 f"{exc}"
             ),
         )
+
+    logger.info(
+        "PDF processed | filename=%s pages=%d chunks=%d",
+        file.filename,
+        pages,
+        chunks,
+    )
 
     # Merge new index into existing one
     try:
@@ -378,6 +441,11 @@ async def upload_document(
         save_vector_store()
 
     except Exception as exc:
+        logger.exception(
+            "Could not merge or save FAISS index | filename=%s",
+            file.filename,
+        )
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -385,6 +453,19 @@ async def upload_document(
                 f"FAISS index: {exc}"
             ),
         )
+
+    logger.info(
+        (
+            "Document indexed successfully | "
+            "filename=%s pages=%d chunks=%d "
+            "vectors=%d duration=%.2fs"
+        ),
+        file.filename,
+        pages,
+        chunks,
+        vector_store.index.ntotal,
+        time.perf_counter() - start_time,
+    )
 
     return UploadResponse(
         filename=file.filename,
@@ -413,6 +494,10 @@ def ask_question(
     request: QuestionRequest,
 ):
     if vector_store is None:
+        logger.warning(
+            "Question rejected | no vector index"
+        )
+
         raise HTTPException(
             status_code=409,
             detail=(
@@ -422,6 +507,10 @@ def ask_question(
         )
 
     if reranker is None:
+        logger.error(
+            "Question rejected | reranker unavailable"
+        )
+
         raise HTTPException(
             status_code=503,
             detail=(
@@ -434,6 +523,10 @@ def ask_question(
     )
 
     if not question:
+        logger.warning(
+            "Question rejected | empty question"
+        )
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -441,17 +534,47 @@ def ask_question(
             ),
         )
 
-    reranked_results = retrieve_and_rerank(
-        query=question,
-        vector_store=vector_store,
-        reranker=reranker,
-        retrieval_k=12,
-        final_k=12,
+    start_time = time.perf_counter()
+
+    logger.info(
+        "Question received | length=%d",
+        len(question),
+    )
+
+    try:
+        reranked_results = retrieve_and_rerank(
+            query=question,
+            vector_store=vector_store,
+            reranker=reranker,
+            retrieval_k=12,
+            final_k=12,
+        )
+
+    except Exception:
+        logger.exception(
+            "Retrieval or reranking failed"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Retrieval or reranking failed."
+            ),
+        )
+
+    logger.info(
+        "Retrieval and reranking completed | candidates=%d",
+        len(reranked_results),
     )
 
     selected_results = select_diverse_results(
         reranked_results,
         final_k=3,
+    )
+
+    logger.info(
+        "Context selected | chunks=%d",
+        len(selected_results),
     )
 
     context_chunks = [
@@ -461,6 +584,10 @@ def ask_question(
     ]
 
     if not context_chunks:
+        logger.warning(
+            "No relevant context found"
+        )
+
         raise HTTPException(
             status_code=404,
             detail=(
@@ -469,9 +596,39 @@ def ask_question(
             ),
         )
 
-    answer = generate_answer(
-        query=question,
-        context_chunks=context_chunks,
+    generation_start = time.perf_counter()
+
+    logger.info(
+        "Generation started | context_chunks=%d",
+        len(context_chunks),
+    )
+
+    try:
+        answer = generate_answer(
+            query=question,
+            context_chunks=context_chunks,
+        )
+
+    except Exception:
+        logger.exception(
+            "Answer generation failed"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Answer generation failed."
+            ),
+        )
+
+    generation_duration = (
+        time.perf_counter()
+        - generation_start
+    )
+
+    logger.info(
+        "Generation completed | duration=%.2fs",
+        generation_duration,
     )
 
     sources = []
@@ -508,6 +665,22 @@ def ask_question(
             seen_sources.add(
                 source_key
             )
+
+    total_duration = (
+        time.perf_counter()
+        - start_time
+    )
+
+    logger.info(
+        (
+            "Question answered successfully | "
+            "sources=%d generation=%.2fs "
+            "total_duration=%.2fs"
+        ),
+        len(sources),
+        generation_duration,
+        total_duration,
+    )
 
     return AnswerResponse(
         answer=answer,
