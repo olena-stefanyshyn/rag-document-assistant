@@ -1,5 +1,8 @@
+import logging
+
 from sentence_transformers import CrossEncoder
 
+logger = logging.getLogger(__name__)
 
 RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
@@ -32,13 +35,14 @@ def retrieve_and_rerank(
 
     results = retriever.invoke(query)
 
-    print("\nFAISS CANDIDATES:")
+    logger.debug("FAISS candidates:")
 
     for i, doc in enumerate(results, start=1):
-        print(
-            f"{i}. "
-            f"document={doc.metadata.get('document')} | "
-            f"page={doc.metadata.get('page')}"
+        logger.debug(
+            "%d. document=%s | page=%s",
+            i,
+            doc.metadata.get("document"),
+            doc.metadata.get("page"),
         )
 
     pairs = [
@@ -54,17 +58,18 @@ def retrieve_and_rerank(
         reverse=True,
     )
 
-    print("\nAFTER RERANKING:")
+    logger.debug("Results after reranking:")
 
     for i, (doc, score) in enumerate(
         reranked_results,
         start=1,
     ):
-        print(
-            f"{i}. "
-            f"score={float(score):.4f} | "
-            f"document={doc.metadata.get('document')} | "
-            f"page={doc.metadata.get('page')}"
+        logger.debug(
+            "%d. score=%.4f | document=%s | page=%s",
+            i,
+            float(score),
+            doc.metadata.get("document"),
+            doc.metadata.get("page"),
         )
 
     return reranked_results[:final_k]
